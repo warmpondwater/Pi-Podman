@@ -1,0 +1,228 @@
+#!/usr/bin/env node
+
+const { execSync, spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
+
+// --- Configuration ---
+const HOME = os.homedir();
+const CWD = process.cwd();
+
+// Find the Git Root (if it exists)
+let GIT_ROOT = CWD;
+try {
+    const root = execSync('git rev-parse --show-toplevel', { stdio: 'pipe' }).toString().trim();
+    if (root) GIT_ROOT = root;
+} catch (e) {
+    // Not in a git repo, use CWD
+}
+
+const TARGET_PROJECT = GIT_ROOT;
+const PROJECT_NAME = path.basename(TARGET_PROJECT);
+const RELATIVE_PATH = path.relative(GIT_ROOT, CWD);
+
+// Create a unique hash based on the absolute path to prevent collisions
+const PATH_HASH = crypto.createHash('md5').update(TARGET_PROJECT).digest('hex').substring(0, 8);
+const VAULT_ROOT = path.join(HOME, '.pi', 'vaults');
+const VAULT_DIR = path.join(VAULT_ROOT, `${PROJECT_NAME}-${PATH_HASH}.git`);
+const REMOTES_STORE = path.join(VAULT_DIR, 'remotes.json');
+const PROJECT_PATH_STORE = path.join(VAULT_DIR, 'project_path.txt');
+const SCRIPT_DIR = __dirname;
+const IMAGE_NAME = 'pi-coding-agent-image';
+
+// --- Helper: Command Result Pattern [DEF_CMD_01] ---
+class CommandResult {
+    constructor(stdout, stderr, error = null) {
+        this.stdout = (stdout || '').trim();
+        this.stderr = (stderr || '').trim();
+        this.error = error;
+        this.success = error === null;
+    }
+
+    // Force unwrapping of the result. Throws if the command failed.
+    unwrap(context = "Command failed") {
+        if (!this.success) {
+            throw new Error(`${context}: ${this.stderr || this.error.message}`);
+        }
+        return this.stdout;
+    }
+
+    // Optional unwrap that returns null instead of throwing
+    orNull() {
+        return this.success ? this.stdout : null;
+    }
+}
+
+function run(cmd, options = {}) {
+    try {
+        const stdout = execSync(cmd, { stdio: 'pipe', encoding: 'utf8', ...options });
+        return new CommandResult(stdout, '');
+    } catch (e) {
+        return new CommandResult(e.stdout, e.stderr, e);
+    }
+}
+
+// --- Helper: Interactive Spawn ---
+function spawnInteractive(cmd, args) {
+    return spawnSync(cmd, args, { stdio: 'inherit' });
+}
+
+async function main() {
+    console.log(`🛡️  Pi-Podman: Starting session for [${PROJECT_NAME}]...`);
+
+    // 1. Ensure Podman Machine is running (macOS)
+    if (process.platform === 'darwin') {
+        const status = run('podman machine status').orNull();
+        if (status && !status.includes('Running')) {
+            console.log("🚀 Starting Podman machine...");
+            run('podman machine start', { stdio: 'inherit' }).unwrap("Failed to start Podman machine");
+        }
+    }
+
+    // 2. Ensure Image exists
+    const imageExists = run(`podman image exists ${IMAGE_NAME}`).success;
+    if (!imageExists) {
+        console.log(`🏗️  Building ${IMAGE_NAME}...`);
+        const build = spawnInteractive('podman', ['build', '-t', IMAGE_NAME, '-f', path.join(SCRIPT_DIR, 'Dockerfile'), SCRIPT_DIR]);
+        if (build.status !== 0) throw new Error("Failed to build Podman image.");
+    }
+
+    // 2.5 Validate Pi Configuration [Pillar I: Contextual Mapping]
+    const agentConfigDir = path.join(HOME, '.pi', 'agent');
+    const configFiles = ['models.json', 'providers.json'];
+    let configIssue = false;
+
+    if (!fs.existsSync(agentConfigDir)) {
+        console.warn(`⚠️  Warning: Configuration directory not found at ${agentConfigDir}`);
+        configIssue = true;
+    } else {
+        configFiles.forEach(file => {
+            const filePath = path.join(agentConfigDir, file);
+            if (!fs.existsSync(filePath)) {
+                console.warn(`⚠️  Warning: ${file} is missing in ${agentConfigDir}`);
+                configIssue = true;
+            } else {
+                const content = fs.readFileSync(filePath, 'utf8').trim();
+                if (content === "" || content === "{}" || content === "[]") {
+                    console.warn(`⚠️  Warning: ${file} appears to be empty.`);
+                    configIssue = true;
+                }
+            }
+        });
+    }
+
+    if (configIssue) {
+        console.log("💡 Tip: See Pi-config.md for instructions on how to set up your agent's brain.");
+    }
+
+    let originalBranch = 'main';
+
+    // 3. Vault & Ghosting Logic
+    if (fs.existsSync(path.join(TARGET_PROJECT, '.git'))) {
+        if (!fs.existsSync(VAULT_ROOT)) fs.mkdirSync(VAULT_ROOT, { recursive: true });
+        
+        if (!fs.existsSync(VAULT_DIR)) {
+            console.log(`📦 Initializing new Vault at ${VAULT_DIR}...`);
+            run(`git init --bare "${VAULT_DIR}"`).unwrap("Failed to initialize Vault");
+            fs.writeFileSync(PROJECT_PATH_STORE, TARGET_PROJECT);
+        }
+
+        // Detect current branch
+        originalBranch = run('git rev-parse --abbrev-ref HEAD').orNull() || 'main';
+
+        // [DEF_GHOST_01] Ghosting: Hide ALL remotes
+        const remotesRes = run('git remote');
+        if (remotesRes.success && remotesRes.stdout) {
+            const remotes = {};
+            const names = remotesRes.stdout.split('\n');
+            console.log(`👻 Ghosting ${names.length} remotes...`);
+            for (const name of names) {
+                const url = run(`git remote get-url ${name}`).orNull();
+                if (url) {
+                    remotes[name] = url;
+                    run(`git remote remove ${name}`).unwrap(`Failed to ghost remote: ${name}`);
+                }
+            }
+            fs.writeFileSync(REMOTES_STORE, JSON.stringify(remotes, null, 2));
+        }
+
+        // Ensure Vault remote exists
+        if (!run('git remote get-url vault').success) {
+            run(`git remote add vault "${VAULT_DIR}"`).unwrap("Failed to add Vault remote");
+        }
+
+        // [DEF_VAULT_01] Pre-Session Snapshot
+        console.log("📸 Capturing pre-session snapshot (staging all changes)...");
+        run('git add .').unwrap("Failed to stage files");
+        run('git commit -m "Pre-Pi Snapshot: ' + new Date().toISOString() + '" --allow-empty').unwrap("Snapshot commit failed");
+        run(`git push vault ${originalBranch} --force`).unwrap("Failed to push to Vault");
+    }
+
+    try {
+        // 4. Run the Podman Container
+        const prompt = process.argv[2] || "Are you up and well?";
+        console.log(`🚀 Launching Pi-Podman...`);
+        console.log(`   📂 Host Root: ${TARGET_PROJECT}`);
+        console.log(`   📂 Work Dir:  /app/${RELATIVE_PATH}`);
+
+        // [DEF_SANDBOX_01] Container isolation
+        const podmanArgs = [
+            'run', '-it', '--rm',
+            '-v', `${TARGET_PROJECT}:/app:z`,
+            '-w', `/app/${RELATIVE_PATH}`,
+            '-v', `${path.join(HOME, '.gitconfig')}:/root/.gitconfig:ro`,
+            '-v', `${path.join(HOME, '.pi', 'agent')}:/root/.pi/agent:z`,
+            '--security-opt', 'no-new-privileges',
+            '--add-host', 'host.containers.internal:host-gateway',
+            IMAGE_NAME,
+            prompt
+        ];
+
+        spawnInteractive('podman', podmanArgs);
+
+    } finally {
+        // 5. Post-Session Cleanup & Restore (Runs even if container crashes)
+        console.log("\n💾 Session finished. Restoring environment...");
+
+        if (fs.existsSync(path.join(TARGET_PROJECT, '.git')) || fs.existsSync(REMOTES_STORE)) {
+            
+            // [DEF_RECOVERY_01] Disaster Recovery
+            if (!fs.existsSync(path.join(TARGET_PROJECT, '.git'))) {
+                console.log("⚠️  Detected .git folder deletion! Recovering from Vault...");
+                run('git init').unwrap("Failed to re-init git");
+                run(`git remote add vault "${VAULT_DIR}"`).unwrap("Failed to re-add vault remote");
+                run('git fetch vault').unwrap("Failed to fetch from vault");
+                run(`git reset --hard vault/${originalBranch}`).unwrap("Failed to restore branch from vault");
+            }
+
+            // Sync final changes to Vault
+            run('git add .').orNull();
+            run('git commit -m "Post-Pi Sync: ' + new Date().toISOString() + '" --allow-empty').orNull();
+            run(`git push vault ${originalBranch}`).orNull();
+
+            // Restore Ghosted Remotes
+            if (fs.existsSync(REMOTES_STORE)) {
+                try {
+                    const remotes = JSON.parse(fs.readFileSync(REMOTES_STORE, 'utf8'));
+                    for (const [name, url] of Object.entries(remotes)) {
+                        console.log(`🔗 Restoring '${name}' remote (${url})...`);
+                        run(`git remote add ${name} "${url}"`).orNull();
+                    }
+                    fs.unlinkSync(REMOTES_STORE);
+                } catch (e) {
+                    console.error("❌ Warning: Failed to restore some remotes. Check remotes.json in vault.");
+                }
+            }
+        }
+        console.log("✅ Cleanup complete. Your code is safe.\n");
+    }
+}
+
+
+
+main().catch(err => {
+    console.error("❌ Fatal Error:", err.message);
+    process.exit(1);
+});

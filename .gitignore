@@ -1,0 +1,13 @@
+# macOS files
+.DS_Store
+
+# Prevent committing local project backups
+# The Bare Bones Git Vault Location
+Backups/
+.gemini/
+
+#Pi Config files
+models.json
+settings.json
+audit.md
+threat_model.md

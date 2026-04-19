@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
+
+// --- Configuration ---
+const HOME = os.homedir();
+const TARGET_PROJECT = process.cwd();
+const PROJECT_NAME = path.basename(TARGET_PROJECT);
+// Create a unique hash based on the absolute path to prevent collisions
+const PATH_HASH = crypto.createHash('md5').update(TARGET_PROJECT).digest('hex').substring(0, 8);
+const VAULT_DIR = path.join(HOME, '.pi', 'vaults', `${PROJECT_NAME}-${PATH_HASH}.git`);
+const REMOTES_STORE = path.join(VAULT_DIR, 'remotes.json');
+
+// --- Helper: Command Result Pattern [DEF_CMD_01] ---
+class CommandResult {
+    constructor(stdout, stderr, error = null) {
+        this.stdout = (stdout || '').trim();
+        this.stderr = (stderr || '').trim();
+        this.error = error;
+        this.success = error === null;
+    }
+
+    unwrap(context = "Command failed") {
+        if (!this.success) {
+            throw new Error(`${context}: ${this.stderr || this.error.message}`);
+        }
+        return this.stdout;
+    }
+
+    orNull() {
+        return this.success ? this.stdout : null;
+    }
+}
+
+function run(cmd, options = {}) {
+    try {
+        const stdout = execSync(cmd, { stdio: 'pipe', encoding: 'utf8', ...options });
+        return new CommandResult(stdout, '');
+    } catch (e) {
+        return new CommandResult(e.stdout, e.stderr, e);
+    }
+}
+
+async function main() {
+    console.log(`📡 Pi-Sync: Connecting Vault to GitHub for [${PROJECT_NAME}]...`);
+
+    const userMessage = process.argv[2];
+
+    // 1. Check if Vault exists
+    if (!fs.existsSync(VAULT_DIR)) {
+        console.error(`❌ Error: No vault found for this project at ${VAULT_DIR}`);
+        process.exit(1);
+    }
+
+    // 2. Find the "Ghosted" Origin URL
+    let originUrl = null;
+    if (fs.existsSync(REMOTES_STORE)) {
+        const remotes = JSON.parse(fs.readFileSync(REMOTES_STORE, 'utf8'));
+        originUrl = remotes['origin'];
+    } else {
+        // If session is closed, we can get it from the project's own git config
+        originUrl = run('git remote get-url origin').orNull();
+    }
+
+    if (!originUrl) {
+        console.error("❌ Error: Could not find the original GitHub URL (origin).");
+        console.log("   Make sure you are in the project folder and have used 'origin' before.");
+        process.exit(1);
+    }
+
+    // 3. Optional: Add a custom commit message to the Vault state
+    if (userMessage) {
+        console.log(`📝 Adding sync note: "${userMessage}"`);
+        // We need to find the current branch to commit to it
+        // In a bare repo, we check where HEAD points
+        const headRef = run(`git --git-dir="${VAULT_DIR}" symbolic-ref --short HEAD`).orNull() || 'main';
+        
+        // Create an empty commit with the message on the current branch
+        // This effectively "labels" the current state in the vault history
+        run(`git --git-dir="${VAULT_DIR}" commit --allow-empty -m "${userMessage} [pi-sync]"`);
+    }
+
+    console.log(`🔗 Target: ${originUrl}`);
+    console.log(`📤 Pushing Vault snapshots to GitHub...`);
+
+    // 4. The "Secret Sync" Command
+    // We run git directly against the bare vault repo and push to the remote URL.
+    const pushRes = run(`git --git-dir="${VAULT_DIR}" push "${originUrl}" --all`);
+
+    if (pushRes.success) {
+        console.log(`\n✅ Success! Current Vault state has been squirreled away to GitHub.`);
+        console.log(`🛡️  The Agent is still trapped, but your data is now in the Cloud.`);
+    } else {
+        console.error("\n❌ Sync failed. Check your internet connection or GitHub permissions.");
+        console.error(`   Details: ${pushRes.stderr}`);
+    }
+}
+
+
+main().catch(err => {
+    console.error("❌ Fatal Error:", err.message);
+    process.exit(1);
+});
