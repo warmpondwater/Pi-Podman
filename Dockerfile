@@ -10,7 +10,7 @@ RUN npm install -g npm@latest && npm install -g @mariozechner/pi-coding-agent
 # Create directory for Dendrite
 WORKDIR /opt/dendrite
 # Copy your local built project into the image
-15 COPY . .
+COPY . .
 # Install dependencies and build inside the container
 RUN npm install && npm run build
 # -------------------------
