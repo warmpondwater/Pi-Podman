@@ -18,10 +18,12 @@ COPY Dendrite-MCP .
 RUN rm -rf node_modules && npm install --legacy-peer-deps && npm run build
 # Create symlink for CLI
 RUN chmod +x scripts/dendrite-cli.sh && ln -s /opt/Dendrite-MCP/scripts/dendrite-cli.sh /usr/local/bin/dendrite
+RUN chmod +x scripts/pi-with-dendrite.sh
 # Configure pi to see Dendrite
-RUN mkdir -p /root/.pi && echo '{"mcpServers": {"dendrite": {"command": "node", "args": ["/opt/Dendrite-MCP/build/index.js"]}}}' > /root/.pi/config.json
+RUN mkdir -p /root/.pi && echo '{"mcpServers": {"dendrite": {"command": "dendrite", "args": ["audit", "/app"]}}}' > /root/.pi/config.json
 # -------------------------
 WORKDIR /app
-ENTRYPOINT ["pi"]
+EXPOSE 3000
+ENTRYPOINT ["/opt/Dendrite-MCP/scripts/pi-with-dendrite.sh"]
 # Update your .mcp.json to point to the INTERNAL path
 #The path will be: /opt/dendrite/build/index.js
