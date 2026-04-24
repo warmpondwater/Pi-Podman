@@ -21,6 +21,7 @@ RUN chmod +x scripts/dendrite-cli.sh && ln -s /opt/Dendrite-MCP/scripts/dendrite
 RUN chmod +x scripts/pi-with-dendrite.sh
 # Configure pi to see Dendrite
 RUN mkdir -p /root/.pi && echo '{"mcpServers": {"dendrite": {"command": "dendrite", "args": ["audit", "/app"]}}}' > /root/.pi/config.json
+COPY PI.md /app/PI.md
 # -------------------------
 WORKDIR /app
 EXPOSE 3000
