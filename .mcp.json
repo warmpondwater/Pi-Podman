@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "dendrite": {
-      "command": "node",
+      "command": "/usr/local/bin/node",
       "args": [
         "/opt/Dendrite-MCP/build/index.js"
       ]
