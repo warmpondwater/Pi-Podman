@@ -1,16 +1,8 @@
 {
   "mcpServers": {
     "dendrite": {
-      "command": "podman",
+      "command": "node",
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--entrypoint",
-        "node",
-        "-v",
-        "/Users/max/GitHub/pi-podman:/app",
-        "pi-podman",
         "/opt/Dendrite-MCP/build/index.js"
       ]
     }
