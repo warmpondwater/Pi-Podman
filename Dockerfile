@@ -16,6 +16,8 @@ WORKDIR /opt/Dendrite-MCP
 COPY Dendrite-MCP .
 # Clean and install dependencies to ensure native modules match the container architecture
 RUN rm -rf node_modules && npm install --legacy-peer-deps && npm run build
+# Create symlink for CLI
+RUN chmod +x scripts/dendrite-cli.sh && ln -s /opt/Dendrite-MCP/scripts/dendrite-cli.sh /usr/local/bin/dendrite
 # -------------------------
 WORKDIR /app
 ENTRYPOINT ["pi"]
