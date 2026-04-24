@@ -16,6 +16,7 @@ This file defines your default preferences and any external packages
 	"defaultProvider": "ollama",
 	"packages":[
 	"npm:@ollama/pi-web-search"
+	"npm:pi-mcp-adapter"
 	],
 	"lastChangelogVersion":"0.66.1"
 } 
