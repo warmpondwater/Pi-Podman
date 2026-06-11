@@ -9,22 +9,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 # Install pi agent
 RUN npm install -g npm@latest && npm install -g @mariozechner/pi-coding-agent
-# --- ADD DENDRITE HERE ---
-# Create directory for Dendrite
-WORKDIR /opt/Dendrite-MCP
-# Copy your local built project into the image
-COPY Dendrite-MCP .
-# Clean and install dependencies to ensure native modules match the container architecture
-RUN rm -rf node_modules && npm install --legacy-peer-deps && npm run build
-# Create symlink for CLI
-RUN chmod +x scripts/dendrite-cli.sh && ln -s /opt/Dendrite-MCP/scripts/dendrite-cli.sh /usr/local/bin/dendrite
-RUN chmod +x scripts/pi-with-dendrite.sh
-# Configure pi to see Dendrite
-RUN mkdir -p /root/.pi && echo '{"mcpServers": {"dendrite": {"command": "dendrite", "args": ["audit", "/app"]}}}' > /root/.pi/config.json
-COPY PI.md /app/PI.md
-# -------------------------
 WORKDIR /app
 EXPOSE 3000
-ENTRYPOINT ["/opt/Dendrite-MCP/scripts/pi-with-dendrite.sh"]
-# Update your .mcp.json to point to the INTERNAL path
-#The path will be: /opt/dendrite/build/index.js
+ENTRYPOINT ["pi"]
