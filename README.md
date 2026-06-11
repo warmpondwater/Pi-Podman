@@ -1,70 +1,101 @@
 # 🛡️ Pi-Podman: The "Anti-Wipe" Coding Sandbox
 
-Run the [Pi-Coding-Agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) with total peace of mind. This setup uses Podman on macOS to create an air-gapped "clean room" for your AI agent. 
+> **Welcome Back!** If it's been 6 months and you've forgotten how this works, start reading here.
 
-## 🚀 The Three-Layer Safety Model
-This architecture ensures that even a total "hallucination" by the AI cannot cause permanent data loss.
+This project is a protective wrapper around the [Pi-Coding-Agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent). AI agents are powerful, but they can hallucinate and run destructive commands (like `rm -rf` or `git push --force`). 
 
-1.  **Layer 1: The Project (The Sandbox):** The agent works here. It can write code and run builds, but it is physically trapped in this folder.
-2.  **Layer 2: The Vault (The Local Safe):** A hidden, bare Git repository at `~/.pi/vaults/`. The agent **cannot** see or touch this. Every session starts and ends with an automatic backup to this safe.
-3.  **Layer 3: GitHub (The Cloud Vault):** Your original remote. The agent's connection to this is "Ghosted" (removed) while it's working, making it impossible for the AI to push code or delete remote branches.
+This setup uses **Podman** on macOS to create an air-gapped "clean room" for the AI, ensuring that **even a total hallucination cannot cause permanent data loss or cloud corruption.**
 
-## 🏗️ Architecture
-*   **The Sandbox (Podman):** A Linux container containing Node:20-slim & Pi-Coding-Agent with no access to your host system files.
-*   **The Guard (Node.js):** A wrapper script (`pi-podman`) that manages snapshots, ghosting, and disaster recovery.
-*   **The Bridge (Node.js):** A utility (`pi-sync`) that allows you to squirrel away vault data to GitHub in real-time.
+---
 
-## 🛠️ Setup
+## 🧠 How It Works Under The Hood
 
-### 1. Prerequisites
-Ensure you have the following installed on your host system:
-*   **Podman:** [Install Podman](https://podman.io/docs/installation) (on macOS, run `brew install podman`)
-*   **Git:** For version control and vaulting.
-*   **Ollama:** To access the AGENT/LLM.
-*   **Node.js:** To run Pi-Podman scripts.
+When you run `pi-podman` in a project folder, here is exactly what happens behind the scenes:
 
-### 2. Build the Image
-The Node.js 20 environment for the agent is contained entirely within this sandbox image.
+1. **The Ghosting:** The script temporarily deletes all your Git remotes (`origin`, etc.). The AI never sees your GitHub URLs and therefore cannot push to them or delete your cloud branches.
+2. **The Vault Backup:** The script creates a hidden, bare Git repository at `~/.pi/vaults/` (The Vault). It takes a snapshot of your code and pushes it to this Vault. The AI has **zero access** to this directory.
+3. **The Sandbox (Podman):** A Linux container is launched. It mounts **only** your current project folder, blocking the AI from seeing your host system (`~`, `/Documents`, etc.). The AI runs entirely inside this isolated container.
+4. **The Bridge:** While the AI works, you can open another terminal and run `pi-sync`. This bypasses the container and pushes the code from your Vault directly to GitHub, letting you safely back up milestones.
+5. **Disaster Recovery:** When you close the AI session, the script wakes up. It restores your Git remotes. If the AI maliciously deleted your `.git` folder, the script automatically reconstructs it by pulling from the hidden Vault.
+
+---
+
+## 🛠️ Re-Commissioning Guide (Setting it up from scratch)
+
+If you are setting this up on a new Mac or returning after a long break, follow these steps in order.
+
+### 1. Re-install Prerequisites
+Ensure you have the core tools running on your host Mac:
+*   **Podman:** Runs the containers. (`brew install podman` then `podman machine init` and `podman machine start`)
+*   **Node.js:** Runs the `pi-podman` wrapper scripts.
+*   **Ollama:** Runs the LLMs locally on your Mac GPU.
+*   **Git:** Required for the Vault system.
+
+### 2. Configure the Agent's "Brain"
+The AI running inside the container needs to know where your host's Ollama is. 
+Ensure you have a configuration file at `~/.pi/agent/models.json` looking like this:
+
+```json
+{
+  "defaultModel": "qwen2.5:latest",
+  "defaultProvider": "ollama",
+  "packages": [
+    "npm:@ollama/pi-web-search",
+    "npm:pi-mcp-adapter"
+  ],
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://host.containers.internal:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "qwen2.5:latest", "reasoning": true }
+      ]
+    }
+  }
+}
+```
+*(Note: `host.containers.internal` is the magic URL that lets the Podman container talk to your Mac's native Ollama).*
+
+### 3. Build the Sandbox Image
+We need to bake the actual `pi-coding-agent` into a Podman image. Open a terminal in this repo's folder and run:
+
 ```bash
-podman build -t pi-coding-agent-image -f Dockerfile .
+podman build --no-cache -t pi-coding-agent-image -f Dockerfile .
 ```
 
 > [!TIP]
-> **Updating the Agent:** If you see an "Update Available" message in your terminal during a session, you must rebuild the image using the command above to apply the update. Running the suggested `npm install` command inside the session will not persist.
+> **Updating the Agent:** If you see an "Update Available" message in your terminal during a session, you must close the session and run the `--no-cache` build command above. Running `npm install` inside the container won't persist!
 
-### 3. Install the CLI Tools
-The wrapper scripts (`pi-podman` and `pi-sync`) require **Node.js** on your host system.
+### 4. Link the CLI Scripts
+Make the local scripts executable and link them so you can run them from anywhere:
 
-Make the scripts executable and link them globally:
 ```bash
 chmod +x pi-podman pi-sync
 sudo ln -s "$PWD/pi-podman" /usr/local/bin/pi-podman
 sudo ln -s "$PWD/pi-sync" /usr/local/bin/pi-sync
 ```
 
-## ⌨️ Usage
+---
 
-### Start a Session
-Go to any project folder and run:
+## ⌨️ Daily Usage
+
+### Start an AI Session
+Navigate to the project you want the AI to work on and run:
 ```bash
 pi-podman "Refactor the login logic"
 ```
-*The script will automatically start Podman, ghost your remotes, and back up your code to the Vault.*
 
-### Real-Time "Squirreling" (Cloud Sync)
-To back up the agent's work to GitHub **without stopping the session**, open a second terminal and run:
+### Safely Save to Cloud
+While the AI is running (or after), open a second terminal and push the work to GitHub safely:
 ```bash
 pi-sync "Milestone: Finished refactoring login"
 ```
-*This pushes the current Vault state to GitHub via a "backdoor" the agent cannot see. This makes it easy to track milestones in your GitHub history without interrupting the agent's session. If you don't provide a message, it will simply push the latest snapshot.*
 
-### Key Defenses
-*   **Ghosting:** ALL git remotes are removed during the session. The AI never sees your GitHub URLs.
-*   **Air-Gap:** The Vault folder is not mounted into Podman. The AI cannot delete your local backups.
-*   **Disaster Recovery:** If the agent deletes your `.git` folder, `pi-podman` will automatically restore it from the Vault upon exit.
-*   **Privilege Isolation:** The container runs with `--security-opt no-new-privileges`.
-
-### Maintenance
-Run `./podman-cleanup.sh` to reclaim disk space from old images, dangling volumes, and orphaned vaults.
+### Reclaim Disk Space
+Podman eats disk space over time. If your Mac is filling up, run the included cleanup script from this repo:
+```bash
+./podman-cleanup.sh
+```
 
 📄 *Keep your code safe and your agents productive.*

@@ -81,7 +81,9 @@ async function main() {
         
         // Create an empty commit with the message on the current branch
         // This effectively "labels" the current state in the vault history
-        run(`git --git-dir="${VAULT_DIR}" commit --allow-empty -m "${userMessage} [pi-sync]"`);
+        run(`git --git-dir="${VAULT_DIR}" commit --allow-empty -m "$SYNC_MSG"`, {
+            env: { ...process.env, SYNC_MSG: `${userMessage} [pi-sync]` }
+        });
     }
 
     console.log(`🔗 Target: ${originUrl}`);
