@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 # Install pi agent
-RUN npm install -g npm@latest && npm install -g @mariozechner/pi-coding-agent@0.79.1
+ARG CACHEBUST=1
+RUN npm install -g npm@latest && npm install -g @mariozechner/pi-coding-agent@latest
 WORKDIR /app
 EXPOSE 3000
 ENTRYPOINT ["pi"]
